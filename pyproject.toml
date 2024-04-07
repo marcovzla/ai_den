@@ -6,6 +6,7 @@ dependencies = [
     "dacite",
     "datasets",
     "docstring_parser",
+    "ftfy",
     "huggingface_hub",
     "jsonref",
     "jupyter",
