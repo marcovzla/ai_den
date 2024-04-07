@@ -1,0 +1,20 @@
+[project]
+name = "ai_den"
+version = "0.1.0"
+dependencies = [
+    "accelerate",
+    "dacite",
+    "datasets",
+    "docstring_parser",
+    "huggingface_hub",
+    "jsonref",
+    "jupyter",
+    "openai",
+    "pydantic",
+    "python-dotenv",
+    "sentencepiece",
+    "tiktoken",
+    "tokenizers",
+    "torch",
+    "transformers",
+]

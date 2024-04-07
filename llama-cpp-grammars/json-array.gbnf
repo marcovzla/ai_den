@@ -1,0 +1,26 @@
+# Same grammar as json.gbnf, but only allows an array as the root.
+
+root   ::= " "? array
+value  ::= object | array | string | number | "true" | "false" | "null"
+
+object ::=
+    "{" ws (
+        string ws ":" ws value ws
+        ("," ws string ws ":" ws value ws)*
+    )? "}"
+
+array  ::=
+    "[" ws (
+        value ws
+        ("," ws value ws)*
+    )? "]"
+
+string ::=
+    "\"" (
+        [^"\\] |
+        "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
+    )* "\""
+
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
+
+ws ::= ([ \t\n] ws)?
