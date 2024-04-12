@@ -1,4 +1,5 @@
 import re
+import json
 import inspect
 import dataclasses
 from types import GenericAlias
@@ -13,7 +14,37 @@ from pydantic.fields import Field
 from ai_den.utils.dataclasses import is_dataclass_type
 
 
-def create_json_schema(
+def json_schema(
+        obj: Any,
+        *,
+        name: Optional[str] = None,
+        replace_refs: bool = True,
+        keep_titles: bool = False,
+        flatten: bool = True,
+        ensure_ascii: bool = False,
+        allow_nan: bool = True,
+        indent: Optional[int | str] = None,
+        separators: Optional[tuple[str, str]] = None,
+        sort_keys: bool = False,
+) -> str:
+    schema = create_schema(
+        obj,
+        name=name,
+        replace_refs=replace_refs,
+        keep_titles=keep_titles,
+        flatten=flatten,
+    )
+    return json.dumps(
+        schema,
+        ensure_ascii=ensure_ascii,
+        allow_nan=allow_nan,
+        indent=indent,
+        separators=separators,
+        sort_keys=sort_keys,
+    )
+
+
+def create_schema(
         obj: Any,
         *,
         name: Optional[str] = None,
@@ -22,7 +53,7 @@ def create_json_schema(
         flatten: bool = True,
 ) -> dict[str, Any]:
     if isinstance(obj, type) or isinstance(obj, GenericAlias):
-        return create_json_schema_for_type(
+        return create_schema_for_type(
             obj,
             replace_refs=replace_refs,
             keep_titles=keep_titles,
@@ -30,7 +61,7 @@ def create_json_schema(
         )
 
     if callable(obj):
-        return create_json_schema_for_callable(
+        return create_schema_for_callable(
             obj,
             name=name,
             replace_refs=replace_refs,
@@ -40,7 +71,7 @@ def create_json_schema(
 
     if isinstance(obj, Sequence):
         return [
-            create_json_schema(
+            create_schema(
                 elem,
                 name=name,
                 replace_refs=replace_refs,
@@ -53,7 +84,7 @@ def create_json_schema(
     raise ValueError(f'Unsupported: {obj!r}')
 
 
-def create_json_schema_for_type(
+def create_schema_for_type(
         t: type[Any],
         replace_refs: bool = True,
         keep_titles: bool = False,
@@ -75,7 +106,7 @@ def create_json_schema_for_type(
     )
 
 
-def create_json_schema_for_callable(
+def create_schema_for_callable(
         f: Callable,
         name: Optional[str] = None,
         replace_refs: bool = True,
