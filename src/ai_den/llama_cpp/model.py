@@ -114,12 +114,10 @@ class LlamaCpp:
             grammar=grammar,
         )
 
-    def logprob(self, text: str, *, prefix: Optional[str] = None, suffix: Optional[str] = None) -> float:
+    def logprob(self, text: str) -> float:
         """Computes the log-probability of the given string."""
         if not self.llm.context_params.logits_all:
             raise RuntimeError('Must set logits_all to True to use logprob()')
-        # attach prefix and suffix
-        text = (prefix or '') + text + (suffix or '')
         # tokenize string
         token_ids = self.tokenize(text)
         # predict one token to compute logits
@@ -132,13 +130,14 @@ class LlamaCpp:
         positions = np.arange(len(token_ids))
         return logprobs[positions, token_ids].sum().item()
 
-    def rank(self, options: Iterable[str], *, prefix: Optional[str] = None, suffix: Optional[str] = None) -> list[tuple[float, str]]:
-        options = list(options)
-        scored_options = [(self.logprob(o, prefix=prefix, suffix=suffix), o) for o in options]
-        return sorted(scored_options, reverse=True)
+    def rank(self, items: Iterable[str], *, prefix: str = '', suffix: str = '') -> list[tuple[float, str]]:
+        return sorted(
+            ((self.logprob(f'{prefix}{item}{suffix}'), item) for item in items),
+            reverse=True,
+        )
 
-    def select(self, options: Iterable[str], *, prefix: Optional[str] = None, suffix: Optional[str] = None) -> str:
-        return self.rank(options, prefix=prefix, suffix=suffix)[0][1]
+    def select(self, items: Iterable[str], *, prefix: str = '', suffix: str = '') -> str:
+        return self.rank(items, prefix=prefix, suffix=suffix)[0][1]
 
     def tokenize(self, text: str, add_special_tokens: bool = True) -> list[int]:
         return self.tokenizer.encode(text, add_special_tokens)
