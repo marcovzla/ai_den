@@ -16,6 +16,8 @@ dependencies = [
     "pdf2image",
     "pydantic",
     "python-dotenv",
+    "scikit-learn",
+    "scipy",
     "sentencepiece",
     "tiktoken",
     "tokenizers",
