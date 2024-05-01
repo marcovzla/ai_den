@@ -3,7 +3,7 @@ import json
 import inspect
 import dataclasses
 from types import GenericAlias
-from typing import Any, Optional, get_args, get_origin
+from typing import Any, Literal, Optional, assert_never, get_args, get_origin
 from collections.abc import Callable, Sequence
 
 import jsonref
@@ -297,16 +297,19 @@ def determine_default_dataclass_field_value(
 
 def parse_docstring(
         obj: Any,
-        long_description: bool = False,
+        description_type: Literal['short', 'long', 'full'] = 'full',
 ) -> tuple[Optional[str], dict[str, str]]:
     doc = docstring_parser.parse(inspect.getdoc(obj))
 
-    if long_description and doc.long_description:
-        description = re.sub(r'\s+', ' ', doc.long_description)
-    elif doc.short_description:
-        description = re.sub(r'\s+', ' ', doc.short_description)
-    else:
-        description = None
+    match description_type:
+        case 'short':
+            description = doc.short_description
+        case 'long':
+            description = doc.long_description
+        case 'full':
+            description = doc.description
+        case _:
+            assert_never(description_type)
 
     param_descriptions = {
         p.arg_name: re.sub(r'\s+', ' ', p.description)
