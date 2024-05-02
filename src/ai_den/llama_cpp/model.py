@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional, TypeVar, overload
 from collections.abc import Iterable
 import numpy as np
-from llama_cpp import Llama, LlamaGrammar
+from llama_cpp import Llama, LlamaGrammar, LogitsProcessor, ChatCompletionRequestMessage
 from transformers.utils import is_in_notebook
 from ai_den.utils.paths import PathLike
 from ai_den.llama_cpp.tokenizer import LlamaCppTokenizer
@@ -54,7 +54,8 @@ class LlamaCpp:
         if json_mode and 'grammar' not in kwargs:
             kwargs['grammar'] = self.load_grammar('json')
 
-        resp = self.create_completion(prompt, **kwargs)
+        messages = self.make_messages(prompt)
+        resp = self.create_chat_completion(messages, **kwargs)
         generated_text = ''
 
         if verbose:
@@ -81,37 +82,60 @@ class LlamaCpp:
 
         return generated_text
 
+    def make_messages(self, prompt: str) -> list[ChatCompletionRequestMessage]:
+        messages = []
+
+        if self.system_prompt is not None:
+            messages.append({'role': 'system', 'content': self.system_prompt})
+
+        messages.append({'role': 'user', 'content': prompt})
+
+        return messages
+
     def load_grammar(self, name: str, *, verbose: bool = False) -> LlamaGrammar:
         return LlamaGrammar.from_file(self.grammars_dir / f'{name}.gbnf', verbose=verbose)
 
     def create_completion(
             self,
-            prompt: str,
+            prompt: str | list[int],
             *,
             stream: bool = False,
             temperature: float = 0.0,
             max_tokens: Optional[int] = None,
             grammar: Optional[LlamaGrammar] = None,
+            logprobs: Optional[int] = None,
+            logits_processor: Optional[LogitsProcessor] = None,
     ):
-        messages = []
+        return self.llm.create_completion(
+            prompt=prompt,
+            stream=stream,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            grammar=grammar,
+            logprobs=logprobs,
+            logits_processor=logits_processor,
+        )
 
-        if self.system_prompt:
-            messages.append({
-                'role': 'system',
-                'content': self.system_prompt,
-            })
-
-        messages.append({
-            'role': 'user',
-            'content': prompt,
-        })
-
+    def create_chat_completion(
+            self,
+            messages: list[ChatCompletionRequestMessage],
+            *,
+            stream: bool = False,
+            temperature: float = 0.0,
+            max_tokens: Optional[int] = None,
+            grammar: Optional[LlamaGrammar] = None,
+            logprobs: Optional[int] = None,
+            logits_processor: Optional[LogitsProcessor] = None,
+    ):
         return self.llm.create_chat_completion(
             messages=messages,
             stream=stream,
             temperature=temperature,
             max_tokens=max_tokens,
             grammar=grammar,
+            logprobs=logprobs is not None,
+            top_logprobs=logprobs,
+            logits_processor=logits_processor,
         )
 
     def logprob(self, text: str) -> float:
@@ -121,7 +145,7 @@ class LlamaCpp:
         # tokenize string
         token_ids = self.tokenize(text)
         # predict one token to compute logits
-        self.llm.create_completion(token_ids, max_tokens=1)
+        self.create_completion(token_ids, max_tokens=1)
         # compute log-probabilities
         logprobs = Llama.logits_to_logprobs(self.llm._scores)
         # drop first token_id (the first prediction is the second token)
