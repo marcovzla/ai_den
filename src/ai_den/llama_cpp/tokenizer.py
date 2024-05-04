@@ -18,6 +18,9 @@ def escape_whitespace(s: str) -> str:
 def parse_byte_token(token: str) -> str:
     return chr(int(token[3:-1], base=16))
 
+def is_byte_token(token: str) -> bool:
+    return bool(re.match(r'<0x[0-9a-fA-F]{2}>', token))
+
 
 class LlamaCppTokenizer:
     def __init__(self, llama: llama_cpp.Llama):
@@ -34,41 +37,12 @@ class LlamaCppTokenizer:
             for i in range(self.vocab_size)
         }
 
-        special_tokens_patterns = [
-            re.escape(self._id_to_token(i))
-            for i in range(self.vocab_size)
-            if self._id_to_token_type(i) in (llama_cpp.LLAMA_TOKEN_TYPE_CONTROL, llama_cpp.LLAMA_TOKEN_TYPE_UNKNOWN)
-        ]
-
-        # note the capturing parenthesis, they are needed so that split() returns the separators,
-        # which correspond to special tokens
-        self.special_token_pattern = re.compile('(' + '|'.join(special_tokens_patterns) + ')')
-
     @property
     def is_sentencepiece(self) -> bool:
         return self.vocab_type == llama_cpp.LLAMA_VOCAB_TYPE_SPM
 
     def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
-        token_ids = [self.bos_token_id] if add_special_tokens else []
-        # iterate over chunks of text and special tokens
-        # even position: chunk of text
-        # odd position: special token
-        for i, chunk_or_special_token in enumerate(self.special_token_pattern.split(text)):
-            if i % 2 == 0:
-                # tokenize the chunk of text
-                chunk_token_ids = self.llama.tokenize(chunk_or_special_token.encode(ENCODING), add_bos=False)
-                if i != 0 and chunk_token_ids and self.is_sentencepiece:
-                    # if sentencepiece prepended a space to the first token of the chunk
-                    # and this is not the first chunk
-                    # then we need to remove the space
-                    first_token = self.convert_ids_to_tokens(chunk_token_ids[0])
-                    if first_token.startswith(SENTENCEPIECE_WHITESPACE) and len(first_token) > 1:
-                        chunk_token_ids[0] = self.convert_tokens_to_ids(first_token[1:])
-                token_ids += chunk_token_ids
-            else:
-                # get the id of the special token
-                token_ids.append(self.convert_tokens_to_ids(chunk_or_special_token))
-        return token_ids
+        return self.llama.tokenize(text.encode(ENCODING), add_bos=add_special_tokens, special=True)
 
     def decode(self, ids: Iterable[int], skip_special_tokens: bool = False) -> str:
         return ''.join(self._token_to_piece(id, skip_special_tokens) for id in ids)
@@ -101,6 +75,34 @@ class LlamaCppTokenizer:
         else:
             return [self._token_to_id(t) for t in x]
 
+    @overload
+    def escape_tokens(self, token: str) -> str:
+        ...
+
+    @overload
+    def escape_tokens(self, tokens: Iterable[str]) -> list[str]:
+        ...
+
+    def escape_tokens(self, x):
+        if isinstance(x, str):
+            return self._escape_token(x)
+        else:
+            return [self._escape_token(t) for t in x]
+
+    @overload
+    def unescape_tokens(self, token: str) -> str:
+        ...
+
+    @overload
+    def unescape_tokens(self, tokens: Iterable[str]) -> list[str]:
+        ...
+
+    def unescape_tokens(self, x):
+        if isinstance(x, str):
+            return self._unescape_token(x)
+        else:
+            return [self._unescape_token(t) for t in x]
+
     def convert_tokens_to_string(self, tokens: Iterable[str], skip_special_tokens: bool = False) -> str:
         return ''.join(self._token_to_piece(t, skip_special_tokens) for t in tokens)
 
@@ -111,9 +113,24 @@ class LlamaCppTokenizer:
         return llama_cpp.llama_token_get_type(self.llama.model, id)
 
     def _token_to_id(self, token: str) -> int:
+        token = self._escape_token(token)
+        return self.token_ids[token]
+
+    def _escape_token(self, token: str) -> str:
         if self.is_sentencepiece:
             token = escape_whitespace(token)
-        return self.token_ids[token]
+        if token not in self.token_ids and len(token) == 1:
+            byte_token = f'<0x{ord(token):02X}>'
+            if byte_token in self.token_ids:
+                return byte_token
+        return token
+
+    def _unescape_token(self, token: str) -> str:
+        if self.is_sentencepiece:
+            token = unescape_whitespace(token)
+        if is_byte_token(token):
+            token = parse_byte_token(token)
+        return token
 
     def _token_to_piece(self, token: str | int, skip_special_tokens: bool) -> str:
         # get token and token id
@@ -129,6 +146,8 @@ class LlamaCppTokenizer:
             case llama_cpp.LLAMA_TOKEN_TYPE_UNKNOWN:
                 return '' if skip_special_tokens else token
             case llama_cpp.LLAMA_TOKEN_TYPE_CONTROL:
+                return '' if skip_special_tokens else token
+            case llama_cpp.LLAMA_TOKEN_TYPE_USER_DEFINED:
                 return '' if skip_special_tokens else token
             case llama_cpp.LLAMA_TOKEN_TYPE_BYTE:
                 return parse_byte_token(token)
