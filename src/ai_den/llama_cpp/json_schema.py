@@ -1,7 +1,8 @@
 import re
 import json
-import uuid
 from typing import Any, Self, assert_never
+
+from llama_cpp import LlamaGrammar
 
 from ai_den.utils.json_schema import create_schema
 
@@ -20,7 +21,16 @@ VALUE = 'value'
 
 WS = 'ws'
 
-PRIMITIVE_TYPES = {BOOLEAN, INTEGER, NULL, NUMBER, STRING}
+PRODUCTION_NAMES = {
+    '{}': VALUE,
+    f'{{"type": "{NULL}"}}': NULL,
+    f'{{"type": "{BOOLEAN}"}}': BOOLEAN,
+    f'{{"type": "{INTEGER}"}}': INTEGER,
+    f'{{"type": "{NUMBER}"}}': NUMBER,
+    f'{{"type": "{STRING}"}}': STRING,
+    f'{{"type": "{ARRAY}"}}': ARRAY,
+    f'{{"type": "{OBJECT}"}}': OBJECT,
+}
 
 
 def make_string_literal(s: str) -> str:
@@ -64,7 +74,7 @@ def expand_optionals(chunks: list[str]) -> list[str]:
 class JsonSchemaGrammar:
     def __init__(self, schema: Schema):
         self.productions = {
-            WS: r'[ \t\n]*',
+            WS: '" "?',
             KV_PAIR: rf'{STRING} {WS} ":" {WS} {VALUE}',
             OBJECT: f'"{{" {WS} ({KV_PAIR} {WS} ("," {WS} {KV_PAIR} {WS})*)? "}}"',
             ARRAY: f'"[" {WS} ( {VALUE} {WS} ("," {WS} {VALUE} {WS})*)? "]"',
@@ -76,21 +86,30 @@ class JsonSchemaGrammar:
             VALUE: f'{NULL} | {BOOLEAN} | {NUMBER} | {STRING} | {ARRAY} | {OBJECT}',
         }
 
-        self.production_names = {}
+        self.production_names = PRODUCTION_NAMES.copy()
+
+        self.num_default_productions = len(self.production_names)
 
         self.root = self.add_production(schema)
 
     def __str__(self) -> str:
-        return self.make_gbnf()
+        return self.gbnf()
 
     @classmethod
-    def from_dataclass(cls, data_class: type) -> Self:
+    def from_data_class(cls, data_class: type) -> Self:
         return cls(create_schema(data_class))
 
-    def make_gbnf(self) -> str:
-        productions = [f'root ::= " "? {self.root}'] + [
-            f'{k} ::= {v}'
-            for k, v in reversed(self.productions.items())
+    @classmethod
+    def from_json_schema(cls, json_schema: str) -> Self:
+        return cls(json.loads(json_schema))
+
+    def grammar(self, verbose: bool = False) -> LlamaGrammar:
+        return LlamaGrammar.from_string(self.gbnf(), verbose=verbose)
+
+    def gbnf(self) -> str:
+        productions = [f'root ::= {WS} {self.root}'] + [
+            f'{name} ::= {rule}'
+            for name, rule in reversed(self.productions.items())
         ]
         return '\n\n'.join(productions)
 
@@ -98,16 +117,13 @@ class JsonSchemaGrammar:
         # strip schema of superfluous fields
         schema = strip_schema(schema)
 
-        # if schema is empty, then any value is valid
-        if not schema:
-            return VALUE
-
         # get schema string representations
         schema_repr = json.dumps(schema, sort_keys=True)
 
         # if schema hasn't been seen before, make a new production name
         if schema_repr not in self.production_names:
-            self.production_names[schema_repr] = f'p_{uuid.uuid4().time_low:08x}'
+            n = len(self.production_names) - self.num_default_productions + 1
+            self.production_names[schema_repr] = f'prod_{n}'
 
         # return production name corresponding to the schema
         return self.production_names[schema_repr]
@@ -180,9 +196,6 @@ class JsonSchemaGrammar:
             case 'string' if 'enum' in schema:
                 self.productions[name] = ' | '.join(make_string_literal(val) for val in schema['enum'])
                 return name
-
-            case t if t in PRIMITIVE_TYPES:
-                return t
 
             case t:
                 assert_never(t)
