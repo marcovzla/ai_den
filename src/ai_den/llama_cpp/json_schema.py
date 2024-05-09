@@ -19,7 +19,7 @@ OBJECT = 'object'
 STRING = 'string'
 VALUE = 'value'
 
-WS = 'ws'
+SPACE = 'space'
 
 PRODUCTION_NAMES = {
     '{}': VALUE,
@@ -41,7 +41,7 @@ def strip_schema(schema: Schema) -> Schema:
     new_schema = {}
     for key, value in schema.items():
         match key:
-            case 'type' | 'default':
+            case 'type' | 'default' | 'enum':
                 new_schema[key] = value
             case 'anyOf' | 'prefixItems':
                 new_schema[key] = [strip_schema(clause) for clause in value]
@@ -74,10 +74,10 @@ def expand_optionals(chunks: list[str]) -> list[str]:
 class JsonSchemaGrammar:
     def __init__(self, schema: Schema):
         self.productions = {
-            WS: '" "?',
-            KV_PAIR: rf'{STRING} {WS} ":" {WS} {VALUE}',
-            OBJECT: f'"{{" {WS} ({KV_PAIR} {WS} ("," {WS} {KV_PAIR} {WS})*)? "}}"',
-            ARRAY: f'"[" {WS} ( {VALUE} {WS} ("," {WS} {VALUE} {WS})*)? "]"',
+            SPACE: '" "?',
+            KV_PAIR: rf'{STRING} {SPACE} ":" {SPACE} {VALUE}',
+            OBJECT: f'"{{" {SPACE} ({KV_PAIR} {SPACE} ("," {SPACE} {KV_PAIR} {SPACE})*)? "}}"',
+            ARRAY: f'"[" {SPACE} ( {VALUE} {SPACE} ("," {SPACE} {VALUE} {SPACE})*)? "]"',
             STRING: r'"\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""',
             NUMBER: f'{INTEGER} ("." [0-9]+)? ([eE] [-+]? [0-9]+)?',
             INTEGER: '"-"? ([0-9] | [1-9] [0-9]*)',
@@ -107,7 +107,7 @@ class JsonSchemaGrammar:
         return LlamaGrammar.from_string(self.gbnf(), verbose=verbose)
 
     def gbnf(self) -> str:
-        productions = [f'root ::= {WS} {self.root}'] + [
+        productions = [f'root ::= {SPACE} {self.root}'] + [
             f'{name} ::= {rule}'
             for name, rule in reversed(self.productions.items())
         ]
@@ -122,8 +122,18 @@ class JsonSchemaGrammar:
 
         # if schema hasn't been seen before, make a new production name
         if schema_repr not in self.production_names:
-            n = len(self.production_names) - self.num_default_productions + 1
-            self.production_names[schema_repr] = f'prod_{n}'
+            if 'enum' in schema:
+                name = 'enum'
+            elif 'anyOf' in schema:
+                name = 'union'
+            elif schema.get('type') == 'array':
+                name = 'array'
+            elif schema.get('type') == 'object':
+                name = 'object'
+            else:
+                name = 'prod'
+            n = sum(1 for v in self.production_names.values() if v.startswith(f'{name}_'))
+            self.production_names[schema_repr] = f'{name}_{n+1}'
 
         # return production name corresponding to the schema
         return self.production_names[schema_repr]
@@ -137,8 +147,13 @@ class JsonSchemaGrammar:
             return name
 
         # create production for union of schemas
-        if 'anyOf' in schema:
-            self.productions[name] = ' | '.join(self.add_production(clause) for clause in schema['anyOf'])
+        if anyOf := schema.get('anyOf'):
+            self.productions[name] = ' | '.join(self.add_production(clause) for clause in anyOf)
+            return name
+
+        # handle enums
+        if enum := schema.get('enum'):
+            self.productions[name] = ' | '.join(make_string_literal(val) for val in enum)
             return name
 
         # create production based on schema type
@@ -146,15 +161,15 @@ class JsonSchemaGrammar:
             case 'array':
                 rule = '"["'
 
-                if 'prefixItems' in schema:
+                if prefixItems := schema.get('prefixItems'):
                     rule += '","'.join(
-                        f' {WS} {self.add_production(item)} {WS} '
-                        for item in schema['prefixItems']
+                        f' {SPACE} {self.add_production(item)} {SPACE} '
+                        for item in prefixItems
                     )
 
-                if 'items' in schema:
-                    prod_name = self.add_production(schema['items'])
-                    rule += f' {WS} ({prod_name} {WS} ("," {WS} {prod_name} {WS})*)? '
+                if items := schema.get('items'):
+                    prod_name = self.add_production(items)
+                    rule += f' {SPACE} ({prod_name} {SPACE} ("," {SPACE} {prod_name} {SPACE})*)? '
 
                 rule += '"]"'
 
@@ -174,12 +189,12 @@ class JsonSchemaGrammar:
                         required.append((prop_name, self.add_production(prop_schema)))
 
                 required_components = [
-                    f'{WS} {prop_name} {WS} ":" {WS} {prod_name} {WS}'
+                    f'{SPACE} {prop_name} {SPACE} ":" {SPACE} {prod_name} {SPACE}'
                     for prop_name, prod_name in required
                 ]
 
                 optional_components = [
-                    f'{WS} {prop_name} {WS} ":" {WS} {prod_name} {WS}'
+                    f'{SPACE} {prop_name} {SPACE} ":" {SPACE} {prod_name} {SPACE}'
                     for prop_name, prod_name in optional
                 ]
 
@@ -191,7 +206,7 @@ class JsonSchemaGrammar:
                     if optional_components:
                         rule += '\n\t'
                         rule += '\n\t'.join(
-                            f'({WS} "," {component})?'
+                            f'({SPACE} "," {component})?'
                             for component in optional_components
                         )
                     rule += '\n'
@@ -205,10 +220,6 @@ class JsonSchemaGrammar:
                 rule += '"}"'
 
                 self.productions[name] = rule
-                return name
-
-            case 'string' if 'enum' in schema:
-                self.productions[name] = ' | '.join(make_string_literal(val) for val in schema['enum'])
                 return name
 
             case t:
