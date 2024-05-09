@@ -43,7 +43,7 @@ def strip_schema(schema: Schema) -> Schema:
         match key:
             case 'type' | 'default':
                 new_schema[key] = value
-            case 'anyOf':
+            case 'anyOf' | 'prefixItems':
                 new_schema[key] = [strip_schema(clause) for clause in value]
             case 'items':
                 new_schema[key] = strip_schema(value)
@@ -144,8 +144,22 @@ class JsonSchemaGrammar:
         # create production based on schema type
         match schema.get('type'):
             case 'array':
-                items_production_name = self.add_production(schema['items'])
-                self.productions[name] = f'"[" {WS} ({items_production_name} {WS} ("," {WS} {items_production_name} {WS})*)? "]"'
+                rule = '"["'
+
+                if 'prefixItems' in schema:
+                    rule += '","'.join(
+                        f' {WS} {self.add_production(item)} {WS} '
+                        for item in schema['prefixItems']
+                    )
+
+                if 'items' in schema:
+                    prod_name = self.add_production(schema['items'])
+                    rule += f' {WS} ({prod_name} {WS} ("," {WS} {prod_name} {WS})*)? '
+
+                rule += '"]"'
+
+                self.productions[name] = rule
+
                 return name
 
             case 'object':
@@ -169,28 +183,28 @@ class JsonSchemaGrammar:
                     for prop_name, prod_name in optional
                 ]
 
-                prod_value = '"{"'
+                rule = '"{"'
 
                 if required_components:
-                    prod_value += '\n\t'
-                    prod_value += ' ","\n\t'.join(required_components)
+                    rule += '\n\t'
+                    rule += ' ","\n\t'.join(required_components)
                     if optional_components:
-                        prod_value += '\n\t'
-                        prod_value += '\n\t'.join(
+                        rule += '\n\t'
+                        rule += '\n\t'.join(
                             f'({WS} "," {component})?'
                             for component in optional_components
                         )
-                    prod_value += '\n'
+                    rule += '\n'
                 elif optional_components:
-                    prod_value += '\n\t'
-                    prod_value += '\n\t| '.join(expand_optionals(optional_components))
-                    prod_value += '\n'
+                    rule += '\n\t'
+                    rule += '\n\t| '.join(expand_optionals(optional_components))
+                    rule += '\n'
                 else:
-                    prod_value += ' '
+                    rule += ' '
 
-                prod_value += '"}"'
+                rule += '"}"'
 
-                self.productions[name] = prod_value
+                self.productions[name] = rule
                 return name
 
             case 'string' if 'enum' in schema:
