@@ -123,17 +123,17 @@ class JsonSchemaGrammar:
         # if schema hasn't been seen before, make a new production name
         if schema_repr not in self.production_names:
             if 'enum' in schema:
-                name = 'enum'
+                prefix = 'enum'
             elif 'anyOf' in schema:
-                name = 'union'
+                prefix = 'union'
             elif schema.get('type') == 'array':
-                name = 'array'
+                prefix = 'array'
             elif schema.get('type') == 'object':
-                name = 'object'
+                prefix = 'object'
             else:
-                name = 'prod'
-            n = sum(1 for v in self.production_names.values() if v.startswith(f'{name}_'))
-            self.production_names[schema_repr] = f'{name}_{n+1}'
+                prefix = 'prod'
+            n = 1 + sum(1 for name in self.production_names.values() if name.startswith(f'{prefix}_'))
+            self.production_names[schema_repr] = f'{prefix}_{n}'
 
         # return production name corresponding to the schema
         return self.production_names[schema_repr]
