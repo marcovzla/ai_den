@@ -1,12 +1,12 @@
 import re
-from typing import overload
+from typing import Optional, overload
 from collections.abc import Iterable
 import llama_cpp
 
 
 ENCODING = 'utf-8'
 
-SENTENCEPIECE_WHITESPACE = '\N{LOWER ONE EIGHTH BLOCK}'
+SENTENCEPIECE_WHITESPACE = '\u2581'
 
 
 def unescape_whitespace(s: str) -> str:
@@ -15,11 +15,9 @@ def unescape_whitespace(s: str) -> str:
 def escape_whitespace(s: str) -> str:
     return s.replace(' ', SENTENCEPIECE_WHITESPACE)
 
-def parse_byte_token(token: str) -> str:
-    return chr(int(token[3:-1], base=16))
-
-def is_byte_token(token: str) -> bool:
-    return bool(re.match(r'<0x[0-9a-fA-F]{2}>', token))
+def parse_byte_token(token: str) -> Optional[str]:
+    if m := re.match(r'^<0x([0-9a-f]{2})>$', token, re.IGNORECASE):
+        return chr(int(m[1], base=16))
 
 
 class LlamaCppTokenizer:
@@ -128,8 +126,8 @@ class LlamaCppTokenizer:
     def _unescape_token(self, token: str) -> str:
         if self.is_sentencepiece:
             token = unescape_whitespace(token)
-        if is_byte_token(token):
-            token = parse_byte_token(token)
+        if char := parse_byte_token(token):
+            return char
         return token
 
     def _token_to_piece(self, token: str | int, skip_special_tokens: bool) -> str:
